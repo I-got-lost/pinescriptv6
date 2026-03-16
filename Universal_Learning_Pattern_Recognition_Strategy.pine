@@ -1,8 +1,9 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // Universal Learning Pattern Recognition Strategy
+// (c) 2025 — Academic Exhibition Reference Implementation
 
 //@version=6
-strategy("Universal Learning Pattern Recognition", overlay = true, default_qty_type = strategy.percent_of_equity, default_qty_value = 10, initial_capital = 100000, commission_type = strategy.commission.percent, commission_value = 0.04, slippage = 1, pyramiding = 0, calc_on_every_tick = false)
+strategy("Universal Learning Pattern Recognition", shorttitle = "ULPR Strategy", overlay = true, default_qty_type = strategy.percent_of_equity, default_qty_value = 10, initial_capital = 100000, commission_type = strategy.commission.percent, commission_value = 0.04, slippage = 1, pyramiding = 0, calc_on_every_tick = false, max_bars_back = 500)
 
 // ──────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
@@ -13,81 +14,84 @@ int   DIVERG_LOOKBACK = 5
 // INPUTS — Section A: Trend Core
 // ──────────────────────────────────────────────────────────────────────────────
 string GRP_TREND = "═══ A. Trend Core ═══"
-int    i_emaFastLen   = input.int(9,    "Fast EMA Length",          minval = 2, maxval = 200,  group = GRP_TREND)
-int    i_emaSlowLen   = input.int(21,   "Slow EMA Length",          minval = 2, maxval = 400,  group = GRP_TREND)
-int    i_smaBaseLen   = input.int(50,   "Baseline SMA Length",      minval = 5, maxval = 500,  group = GRP_TREND)
-int    i_hmaLen       = input.int(14,   "Hull MA Length",           minval = 2, maxval = 200,  group = GRP_TREND)
-bool   i_showMAs      = input.bool(true, "Show Moving Averages",    group = GRP_TREND)
+int    i_emaFastLen   = input.int(9,    "Fast EMA Length",          minval = 2,  maxval = 200,  group = GRP_TREND, tooltip = "Period for the fast exponential moving average. Lower values react faster to price changes.")
+int    i_emaSlowLen   = input.int(21,   "Slow EMA Length",          minval = 2,  maxval = 400,  group = GRP_TREND, tooltip = "Period for the slow exponential moving average. The gap between fast and slow EMA defines trend strength.")
+int    i_smaBaseLen   = input.int(50,   "Baseline SMA Length",      minval = 5,  maxval = 500,  group = GRP_TREND, tooltip = "Period for the simple moving average baseline. Acts as a macro trend filter.")
+int    i_hmaLen       = input.int(14,   "Hull MA Length",           minval = 2,  maxval = 200,  group = GRP_TREND, tooltip = "Period for the Hull Moving Average. Confirms trend direction with reduced lag.")
+bool   i_showMAs      = input.bool(true, "Show Moving Averages",   group = GRP_TREND, tooltip = "Toggle visibility of all four moving averages on the chart.")
 
 // ──────────────────────────────────────────────────────────────────────────────
 // INPUTS — Section B: Momentum Engine
 // ──────────────────────────────────────────────────────────────────────────────
 string GRP_MOM = "═══ B. Momentum Engine ═══"
-int    i_rsiLen       = input.int(14,   "RSI Length",               minval = 2, maxval = 100,  group = GRP_MOM)
-int    i_macdFast     = input.int(12,   "MACD Fast Length",         minval = 2, maxval = 100,  group = GRP_MOM)
-int    i_macdSlow     = input.int(26,   "MACD Slow Length",         minval = 2, maxval = 200,  group = GRP_MOM)
-int    i_macdSig      = input.int(9,    "MACD Signal Length",       minval = 2, maxval = 50,   group = GRP_MOM)
-int    i_stochLen     = input.int(14,   "Stochastic Length",        minval = 2, maxval = 100,  group = GRP_MOM)
-int    i_momLen       = input.int(10,   "Momentum Length",          minval = 1, maxval = 100,  group = GRP_MOM)
-bool   i_useDiverg    = input.bool(true, "Enable Divergence Detection", group = GRP_MOM)
+int    i_rsiLen       = input.int(14,   "RSI Length",               minval = 2,  maxval = 100,  group = GRP_MOM, tooltip = "Lookback period for the Relative Strength Index oscillator.")
+int    i_macdFast     = input.int(12,   "MACD Fast Length",         minval = 2,  maxval = 100,  group = GRP_MOM, tooltip = "Fast EMA period for MACD calculation.")
+int    i_macdSlow     = input.int(26,   "MACD Slow Length",         minval = 2,  maxval = 200,  group = GRP_MOM, tooltip = "Slow EMA period for MACD calculation. Must be greater than Fast Length.")
+int    i_macdSig      = input.int(9,    "MACD Signal Length",       minval = 2,  maxval = 50,   group = GRP_MOM, tooltip = "Signal line EMA period. Smooths the MACD line for crossover signals.")
+int    i_stochLen     = input.int(14,   "Stochastic Length",        minval = 2,  maxval = 100,  group = GRP_MOM, tooltip = "Lookback period for %K Stochastic oscillator.")
+int    i_momLen       = input.int(10,   "Momentum Length",          minval = 1,  maxval = 100,  group = GRP_MOM, tooltip = "Number of bars for raw momentum (price difference) calculation.")
+bool   i_useDiverg    = input.bool(true, "Enable Divergence Detection", group = GRP_MOM, tooltip = "Detect bullish/bearish divergence between price and RSI.")
 
 // ──────────────────────────────────────────────────────────────────────────────
 // INPUTS — Section C: Volatility Envelope
 // ──────────────────────────────────────────────────────────────────────────────
 string GRP_VOL = "═══ C. Volatility Envelope ═══"
-int    i_atrLen       = input.int(14,   "ATR Length",               minval = 2, maxval = 100,  group = GRP_VOL)
-int    i_bbLen        = input.int(20,   "Bollinger Band Length",    minval = 2, maxval = 200,  group = GRP_VOL)
-float  i_bbMult       = input.float(2.0, "Bollinger Band Multiplier", minval = 0.5, maxval = 5.0, step = 0.1, group = GRP_VOL)
-int    i_kcLen        = input.int(20,   "Keltner Channel Length",   minval = 2, maxval = 200,  group = GRP_VOL)
-float  i_kcMult       = input.float(1.5, "Keltner Channel Multiplier", minval = 0.5, maxval = 5.0, step = 0.1, group = GRP_VOL)
-bool   i_showBB       = input.bool(true, "Show Bollinger Bands",    group = GRP_VOL)
-bool   i_showKC       = input.bool(false, "Show Keltner Channels",  group = GRP_VOL)
+int    i_atrLen       = input.int(14,   "ATR Length",               minval = 2,  maxval = 100,  group = GRP_VOL, tooltip = "Lookback period for Average True Range. Used for normalization and risk sizing.")
+int    i_bbLen        = input.int(20,   "Bollinger Band Length",    minval = 2,  maxval = 200,  group = GRP_VOL, tooltip = "Period for the Bollinger Band middle line (SMA).")
+float  i_bbMult       = input.float(2.0, "Bollinger Band Multiplier", minval = 0.5, maxval = 5.0, step = 0.1, group = GRP_VOL, tooltip = "Standard deviation multiplier for BB width. 2.0 captures ~95% of price action.")
+int    i_kcLen        = input.int(20,   "Keltner Channel Length",   minval = 2,  maxval = 200,  group = GRP_VOL, tooltip = "Period for the Keltner Channel center line (EMA).")
+float  i_kcMult       = input.float(1.5, "Keltner Channel Multiplier", minval = 0.5, maxval = 5.0, step = 0.1, group = GRP_VOL, tooltip = "ATR multiplier for KC width. BB inside KC = 'squeeze' condition.")
+bool   i_showBB       = input.bool(true,  "Show Bollinger Bands",  group = GRP_VOL, tooltip = "Toggle Bollinger Band overlay visibility.")
+bool   i_showKC       = input.bool(false, "Show Keltner Channels", group = GRP_VOL, tooltip = "Toggle Keltner Channel overlay visibility.")
 
 // ──────────────────────────────────────────────────────────────────────────────
 // INPUTS — Section D: Pattern Recognition
 // ──────────────────────────────────────────────────────────────────────────────
 string GRP_PAT = "═══ D. Pattern Recognition ═══"
-int    i_pivotLeft    = input.int(5,    "Pivot Lookback (Left Bars)",  minval = 1, maxval = 20, group = GRP_PAT)
-int    i_pivotRight   = input.int(5,    "Pivot Lookahead (Right Bars)", minval = 1, maxval = 20, group = GRP_PAT)
-int    i_risingLen    = input.int(3,    "Rising/Falling Bars",      minval = 2, maxval = 10,  group = GRP_PAT)
-int    i_linregLen    = input.int(20,   "Linear Regression Length",  minval = 5, maxval = 100, group = GRP_PAT)
-bool   i_showPivots   = input.bool(true, "Show Pivot Points",       group = GRP_PAT)
+int    i_pivotLeft    = input.int(5,    "Pivot Lookback (Left Bars)",   minval = 1, maxval = 20, group = GRP_PAT, tooltip = "Number of bars to the left that must be lower/higher to confirm a pivot.")
+int    i_pivotRight   = input.int(5,    "Pivot Lookahead (Right Bars)", minval = 1, maxval = 20, group = GRP_PAT, tooltip = "Number of bars to the right to confirm. Higher = more lag but more reliable pivots.")
+int    i_risingLen    = input.int(3,    "Rising/Falling Bars",          minval = 2, maxval = 10, group = GRP_PAT, tooltip = "Consecutive bars required to confirm a rising or falling sequence.")
+int    i_linregLen    = input.int(20,   "Linear Regression Length",     minval = 5, maxval = 100, group = GRP_PAT, tooltip = "Period for least-squares regression line fit to closing prices.")
+bool   i_showPivots   = input.bool(true, "Show Pivot Points",          group = GRP_PAT, tooltip = "Display diamond markers at confirmed swing highs and lows.")
 
 // ──────────────────────────────────────────────────────────────────────────────
 // INPUTS — Section E: Adaptive Weighting & Confluence
 // ──────────────────────────────────────────────────────────────────────────────
 string GRP_WEIGHT = "═══ E. Adaptive Weighting ═══"
-float  i_wTrend       = input.float(0.40, "Weight: Trend",          minval = 0.0, maxval = 1.0, step = 0.05, group = GRP_WEIGHT)
-float  i_wMom         = input.float(0.35, "Weight: Momentum",       minval = 0.0, maxval = 1.0, step = 0.05, group = GRP_WEIGHT)
-float  i_wVol         = input.float(0.25, "Weight: Volatility",     minval = 0.0, maxval = 1.0, step = 0.05, group = GRP_WEIGHT)
-int    i_smoothLen    = input.int(5,    "Score Smoothing Length",    minval = 1, maxval = 50,   group = GRP_WEIGHT)
-bool   i_adaptiveSmooth = input.bool(true, "Adaptive Smoothing (Volatility-Based)", group = GRP_WEIGHT)
-int    i_confluenceMin = input.int(2,   "Min Confluence Count (1-3)", minval = 1, maxval = 3,   group = GRP_WEIGHT)
+float  i_wTrend       = input.float(0.40, "Weight: Trend",          minval = 0.0, maxval = 1.0, step = 0.05, group = GRP_WEIGHT, tooltip = "Relative weight assigned to the Trend Core score. Weights are auto-normalized to sum to 1.0.")
+float  i_wMom         = input.float(0.35, "Weight: Momentum",       minval = 0.0, maxval = 1.0, step = 0.05, group = GRP_WEIGHT, tooltip = "Relative weight assigned to the Momentum Engine score.")
+float  i_wVol         = input.float(0.25, "Weight: Volatility",     minval = 0.0, maxval = 1.0, step = 0.05, group = GRP_WEIGHT, tooltip = "Relative weight assigned to the Volatility Envelope score.")
+int    i_smoothLen    = input.int(5,    "Score Smoothing Length",    minval = 1,   maxval = 50,  group = GRP_WEIGHT, tooltip = "Base EMA period for smoothing the composite score. Higher = smoother, more lag.")
+bool   i_adaptiveSmooth = input.bool(true, "Adaptive Smoothing (Volatility-Based)", group = GRP_WEIGHT, tooltip = "When ON, smoothing length auto-increases in high-volatility environments.")
+int    i_confluenceMin = input.int(2,   "Min Confluence Count (1-3)", minval = 1,  maxval = 3,   group = GRP_WEIGHT, tooltip = "Minimum number of sub-systems (Trend, Momentum, Volatility) that must agree for a valid signal. 3 = strictest.")
 
 // ──────────────────────────────────────────────────────────────────────────────
 // INPUTS — Section F: Signal Generation & Risk
 // ──────────────────────────────────────────────────────────────────────────────
 string GRP_SIG = "═══ F. Signal & Risk Management ═══"
-float  i_bullThresh   = input.float(0.25, "Bull Threshold",         minval = 0.01, maxval = 0.99, step = 0.05, group = GRP_SIG)
-float  i_bearThresh   = input.float(-0.25, "Bear Threshold",        minval = -0.99, maxval = -0.01, step = 0.05, group = GRP_SIG)
-bool   i_confirmClose = input.bool(true, "Require Bar Confirmation (No Repaint)", group = GRP_SIG)
-bool   i_useStopLoss  = input.bool(true, "Enable ATR Stop-Loss",    group = GRP_SIG)
-float  i_slAtrMult    = input.float(2.0, "Stop-Loss ATR Multiplier", minval = 0.5, maxval = 10.0, step = 0.5, group = GRP_SIG)
-bool   i_useTakeProfit = input.bool(true, "Enable ATR Take-Profit", group = GRP_SIG)
-float  i_tpAtrMult    = input.float(3.0, "Take-Profit ATR Multiplier", minval = 0.5, maxval = 20.0, step = 0.5, group = GRP_SIG)
-bool   i_filterGaps   = input.bool(true, "Filter Session Gaps (Futures)", group = GRP_SIG)
-bool   i_useAlerts    = input.bool(true, "Enable Alerts",           group = GRP_SIG)
+float  i_bullThresh   = input.float(0.25,  "Bull Threshold",        minval = 0.01,  maxval = 0.99,  step = 0.05, group = GRP_SIG, tooltip = "Composite score must exceed this value to trigger a long entry. Higher = fewer but stronger signals.")
+float  i_bearThresh   = input.float(-0.25, "Bear Threshold",        minval = -0.99, maxval = -0.01, step = 0.05, group = GRP_SIG, tooltip = "Composite score must fall below this value (negative) to trigger a short entry.")
+bool   i_confirmClose = input.bool(true,   "Require Bar Confirmation (No Repaint)", group = GRP_SIG, tooltip = "When ON, signals only fire after the bar closes. Prevents repainting on realtime bars.")
+bool   i_useStopLoss  = input.bool(true,   "Enable ATR Stop-Loss",  group = GRP_SIG, tooltip = "Place a stop-loss order at entry price +/- (ATR x multiplier).")
+float  i_slAtrMult    = input.float(2.0,   "Stop-Loss ATR Multiplier", minval = 0.5, maxval = 10.0, step = 0.5, group = GRP_SIG, tooltip = "How many ATR units away from entry to place the stop-loss. Higher = wider stop.")
+bool   i_useTakeProfit = input.bool(true,  "Enable ATR Take-Profit", group = GRP_SIG, tooltip = "Place a take-profit order at entry price +/- (ATR x multiplier).")
+float  i_tpAtrMult    = input.float(3.0,   "Take-Profit ATR Multiplier", minval = 0.5, maxval = 20.0, step = 0.5, group = GRP_SIG, tooltip = "How many ATR units away from entry to place the take-profit. Tip: keep TP > SL for positive risk/reward.")
+bool   i_filterGaps   = input.bool(true,   "Filter Session Gaps (Futures)", group = GRP_SIG, tooltip = "Skip signals on bars with abnormally large time gaps (e.g., overnight/weekend gaps in futures).")
+bool   i_longOnly     = input.bool(false,  "Long Only Mode",        group = GRP_SIG, tooltip = "When ON, the strategy only takes long positions and ignores short signals.")
+bool   i_shortOnly    = input.bool(false,  "Short Only Mode",       group = GRP_SIG, tooltip = "When ON, the strategy only takes short positions and ignores long signals.")
+bool   i_useAlerts    = input.bool(true,   "Enable Alerts",         group = GRP_SIG, tooltip = "Send TradingView alerts on entry and exit signals.")
 
 // ──────────────────────────────────────────────────────────────────────────────
 // INPUTS — Section G: Visual Settings
 // ──────────────────────────────────────────────────────────────────────────────
 string GRP_VIS = "═══ G. Visual Settings ═══"
-color  i_bullColor    = input.color(color.new(#26a69a, 0), "Bull Color",  group = GRP_VIS)
-color  i_bearColor    = input.color(color.new(#ef5350, 0), "Bear Color",  group = GRP_VIS)
-color  i_neutralColor = input.color(color.new(#787b86, 50), "Neutral Color", group = GRP_VIS)
-bool   i_showBg       = input.bool(true, "Show Signal Background",  group = GRP_VIS)
-bool   i_showLabels   = input.bool(true, "Show Entry/Exit Labels",  group = GRP_VIS)
-int    i_bgTransp     = input.int(85,   "Background Transparency",  minval = 50, maxval = 99, group = GRP_VIS)
+color  i_bullColor    = input.color(color.new(#26a69a, 0),  "Bull Color",    group = GRP_VIS, tooltip = "Color for bullish signals, backgrounds, and labels.")
+color  i_bearColor    = input.color(color.new(#ef5350, 0),  "Bear Color",    group = GRP_VIS, tooltip = "Color for bearish signals, backgrounds, and labels.")
+color  i_neutralColor = input.color(color.new(#787b86, 50), "Neutral Color", group = GRP_VIS, tooltip = "Color for neutral/inactive state in the dashboard.")
+bool   i_showBg       = input.bool(true,   "Show Signal Background", group = GRP_VIS, tooltip = "Tint the chart background during active bullish/bearish signal regimes.")
+bool   i_showLabels   = input.bool(true,   "Show Entry/Exit Labels", group = GRP_VIS, tooltip = "Display triangle markers at strategy entry points.")
+int    i_bgTransp     = input.int(85,      "Background Transparency", minval = 50, maxval = 99, group = GRP_VIS, tooltip = "Transparency of the signal background tint. 99 = nearly invisible, 50 = bold.")
+bool   i_showDashboard = input.bool(true,  "Show Dashboard Table",  group = GRP_VIS, tooltip = "Display the ULPR score dashboard in the top-right corner of the chart.")
 
 // ──────────────────────────────────────────────────────────────────────────────
 // COMPONENT A — TREND CORE
@@ -144,7 +148,7 @@ float atrVal     = ta.atr(i_atrLen)
 
 // Volatility percentile rank — high rank = elevated volatility
 float volPctRank = ta.percentrank(atrVal, 100)
-// Normalize to [-1, +1]: positive = above-average volatility, negative = below
+// Normalize to [-1, +1]: positive = above-average vol, negative = below
 float sVolatility = (nz(volPctRank, 50) - 50.0) / 50.0
 
 // Bollinger Band squeeze detection (BB inside KC)
@@ -157,19 +161,15 @@ bool volBearish  = close < bbMiddle and not isSqueeze and sVolatility < 0.5
 // ──────────────────────────────────────────────────────────────────────────────
 // COMPONENT D — PATTERN RECOGNITION MATRIX
 // ──────────────────────────────────────────────────────────────────────────────
-// EMA crossover events
 bool emaCrossUp   = ta.crossover(emaFast, emaSlow)
 bool emaCrossDn   = ta.crossunder(emaFast, emaSlow)
 
-// Pivot points
 float pivHigh     = ta.pivothigh(high, i_pivotLeft, i_pivotRight)
 float pivLow      = ta.pivotlow(low, i_pivotLeft, i_pivotRight)
 
-// Rising/Falling sequences
 bool isRising     = ta.rising(close, i_risingLen)
 bool isFalling    = ta.falling(close, i_risingLen)
 
-// Linear regression slope
 float linreg      = ta.linreg(close, i_linregLen, 0)
 float linregPrev  = ta.linreg(close, i_linregLen, 1)
 bool  slopeUp     = linreg > linregPrev
@@ -192,11 +192,11 @@ float volFactor       = nz(volPctRank, 50) / 100.0
 int   dynamicLen      = i_adaptiveSmooth ? math.max(2, math.round(i_smoothLen * (1.0 + volFactor))) : i_smoothLen
 float adaptiveAlpha   = 2.0 / (dynamicLen + 1.0)
 
-// Smoothed composite score (persistent across bars)
+// Smoothed composite score (persistent across bars via var)
 var float compositeScore = 0.0
 compositeScore := adaptiveAlpha * rawScore + (1.0 - adaptiveAlpha) * compositeScore
 
-// Confluence counting: how many of the 3 sub-systems agree on direction
+// Confluence counting: how many of the 3 sub-systems agree
 int bullConfluence = (trendBullish ? 1 : 0) + (momBullish ? 1 : 0) + (volBullish ? 1 : 0)
 int bearConfluence = (trendBearish ? 1 : 0) + (momBearish ? 1 : 0) + (volBearish ? 1 : 0)
 
@@ -212,11 +212,15 @@ if i_filterGaps
 // Confirmation gate
 bool confirmed = i_confirmClose ? barstate.isconfirmed : true
 
-// Signal logic
-bool longCondition  = compositeScore > i_bullThresh and bullConfluence >= i_confluenceMin and confirmed and not isGap
-bool shortCondition = compositeScore < i_bearThresh and bearConfluence >= i_confluenceMin and confirmed and not isGap
+// Direction filters
+bool allowLong  = not i_shortOnly
+bool allowShort = not i_longOnly
 
-// Exit logic: reverse signal or stop/take-profit via strategy.exit
+// Signal logic
+bool longCondition  = compositeScore > i_bullThresh and bullConfluence >= i_confluenceMin and confirmed and not isGap and allowLong
+bool shortCondition = compositeScore < i_bearThresh and bearConfluence >= i_confluenceMin and confirmed and not isGap and allowShort
+
+// Exit logic: score reversal
 bool exitLong  = compositeScore < 0 and confirmed
 bool exitShort = compositeScore > 0 and confirmed
 
@@ -226,33 +230,33 @@ bool exitShort = compositeScore > 0 and confirmed
 float atrForRisk = ta.atr(i_atrLen)
 
 if longCondition and strategy.position_size <= 0
-    strategy.entry("Long", strategy.long, alert_message = "ULPR Long Entry | Score: " + str.tostring(compositeScore, "#.##"))
+    strategy.entry("Long", strategy.long, alert_message = "ULPR Long Entry | " + syminfo.ticker + " | Score: " + str.tostring(compositeScore, "#.##"))
     if i_useStopLoss or i_useTakeProfit
         float slPoints = i_useStopLoss   ? atrForRisk * i_slAtrMult / syminfo.mintick : na
         float tpPoints = i_useTakeProfit  ? atrForRisk * i_tpAtrMult / syminfo.mintick : na
-        strategy.exit("Long Exit", "Long", loss = slPoints, profit = tpPoints, alert_message = "ULPR Long Exit")
+        strategy.exit("Long Exit", "Long", loss = slPoints, profit = tpPoints, alert_message = "ULPR Long Exit | " + syminfo.ticker)
 
 if shortCondition and strategy.position_size >= 0
-    strategy.entry("Short", strategy.short, alert_message = "ULPR Short Entry | Score: " + str.tostring(compositeScore, "#.##"))
+    strategy.entry("Short", strategy.short, alert_message = "ULPR Short Entry | " + syminfo.ticker + " | Score: " + str.tostring(compositeScore, "#.##"))
     if i_useStopLoss or i_useTakeProfit
         float slPoints = i_useStopLoss   ? atrForRisk * i_slAtrMult / syminfo.mintick : na
         float tpPoints = i_useTakeProfit  ? atrForRisk * i_tpAtrMult / syminfo.mintick : na
-        strategy.exit("Short Exit", "Short", loss = slPoints, profit = tpPoints, alert_message = "ULPR Short Exit")
+        strategy.exit("Short Exit", "Short", loss = slPoints, profit = tpPoints, alert_message = "ULPR Short Exit | " + syminfo.ticker)
 
 if exitLong and strategy.position_size > 0 and not longCondition
-    strategy.close("Long", comment = "Score reversal", alert_message = "ULPR Long Closed | Score: " + str.tostring(compositeScore, "#.##"))
+    strategy.close("Long", comment = "Score reversal", alert_message = "ULPR Long Closed | " + syminfo.ticker + " | Score: " + str.tostring(compositeScore, "#.##"))
 
 if exitShort and strategy.position_size < 0 and not shortCondition
-    strategy.close("Short", comment = "Score reversal", alert_message = "ULPR Short Closed | Score: " + str.tostring(compositeScore, "#.##"))
+    strategy.close("Short", comment = "Score reversal", alert_message = "ULPR Short Closed | " + syminfo.ticker + " | Score: " + str.tostring(compositeScore, "#.##"))
 
 // ──────────────────────────────────────────────────────────────────────────────
 // ALERTS
 // ──────────────────────────────────────────────────────────────────────────────
 if i_useAlerts
     if longCondition and strategy.position_size <= 0
-        alert("ULPR LONG on " + syminfo.ticker + " | Score: " + str.tostring(compositeScore, "#.##"), alert.freq_once_per_bar_close)
+        alert("ULPR LONG on " + syminfo.ticker + " | Score: " + str.tostring(compositeScore, "#.##") + " | Confluence: " + str.tostring(bullConfluence) + "/3", alert.freq_once_per_bar_close)
     if shortCondition and strategy.position_size >= 0
-        alert("ULPR SHORT on " + syminfo.ticker + " | Score: " + str.tostring(compositeScore, "#.##"), alert.freq_once_per_bar_close)
+        alert("ULPR SHORT on " + syminfo.ticker + " | Score: " + str.tostring(compositeScore, "#.##") + " | Confluence: " + str.tostring(bearConfluence) + "/3", alert.freq_once_per_bar_close)
 
 // ──────────────────────────────────────────────────────────────────────────────
 // VISUAL OUTPUT — Chart Overlay
@@ -264,11 +268,9 @@ plot(i_showMAs ? smaBase   : na, "Baseline SMA", color.new(#9c27b0, 40), 1, plot
 plot(i_showMAs ? hmaSmooth : na, "Hull MA",      color.new(#00bcd4, 20), 2)
 
 // Bollinger Bands
-plot(i_showBB ? bbUpper : na, "BB Upper", color.new(#787b86, 60), 1)
-plot(i_showBB ? bbLower : na, "BB Lower", color.new(#787b86, 60), 1)
-bbFill1 = plot(i_showBB ? bbUpper : na, "BB Fill Upper", na, display = display.none)
-bbFill2 = plot(i_showBB ? bbLower : na, "BB Fill Lower", na, display = display.none)
-fill(bbFill1, bbFill2, color = i_showBB ? color.new(#787b86, 92) : na, title = "BB Fill")
+pBBu = plot(i_showBB ? bbUpper : na, "BB Upper", color.new(#787b86, 60), 1)
+pBBl = plot(i_showBB ? bbLower : na, "BB Lower", color.new(#787b86, 60), 1)
+fill(pBBu, pBBl, color = i_showBB ? color.new(#787b86, 92) : na, title = "BB Fill")
 
 // Keltner Channels
 plot(i_showKC ? kcUpper : na, "KC Upper", color.new(#ff5722, 60), 1)
@@ -284,34 +286,52 @@ if i_showBg
 bgcolor(bgCol, title = "Signal Background")
 
 // Entry signal shapes
-plotshape(i_showLabels and longCondition and strategy.position_size <= 0 ? low : na, "Long Entry", shape.triangleup, location.belowbar, i_bullColor, size = size.small)
-plotshape(i_showLabels and shortCondition and strategy.position_size >= 0 ? high : na, "Short Entry", shape.triangledown, location.abovebar, i_bearColor, size = size.small)
+plotshape(i_showLabels and longCondition and strategy.position_size <= 0 ? low : na,  "Long Signal",  shape.triangleup,   location.belowbar, i_bullColor, size = size.small)
+plotshape(i_showLabels and shortCondition and strategy.position_size >= 0 ? high : na, "Short Signal", shape.triangledown, location.abovebar, i_bearColor, size = size.small)
 
 // Pivot markers
 plotshape(i_showPivots and not na(pivHigh) ? pivHigh : na, "Pivot High", shape.diamond, location.abovebar, color.new(#ff5722, 30), offset = -i_pivotRight, size = size.tiny)
-plotshape(i_showPivots and not na(pivLow) ? pivLow : na, "Pivot Low", shape.diamond, location.belowbar, color.new(#4caf50, 30), offset = -i_pivotRight, size = size.tiny)
+plotshape(i_showPivots and not na(pivLow)  ? pivLow  : na, "Pivot Low",  shape.diamond, location.belowbar, color.new(#4caf50, 30), offset = -i_pivotRight, size = size.tiny)
 
 // Squeeze indicator (dot on bar when BB is inside KC)
 plotshape(isSqueeze ? close : na, "Squeeze", shape.circle, location.absolute, color.new(#ff9800, 40), size = size.tiny)
 
+// Divergence markers
+plotshape(i_useDiverg and bullDiverg ? low : na,  "Bull Divergence", shape.labelup,   location.belowbar, color.new(#26a69a, 50), text = "Div", textcolor = color.white, size = size.tiny)
+plotshape(i_useDiverg and bearDiverg ? high : na, "Bear Divergence", shape.labeldown, location.abovebar, color.new(#ef5350, 50), text = "Div", textcolor = color.white, size = size.tiny)
+
 // ──────────────────────────────────────────────────────────────────────────────
 // INFO TABLE — Composite Score Dashboard
 // ──────────────────────────────────────────────────────────────────────────────
-var table scoreTable = table.new(position.top_right, 2, 7, color.new(#1e222d, 10), border_color = color.new(#363a45, 0), border_width = 1)
-if barstate.islastconfirmedhistory or barstate.isrealtime
-    color scoreColor = compositeScore > i_bullThresh ? i_bullColor : compositeScore < i_bearThresh ? i_bearColor : i_neutralColor
-    table.cell(scoreTable, 0, 0, "ULPR Dashboard",  text_color = color.white, text_size = size.small, bgcolor = color.new(#363a45, 0))
-    table.cell(scoreTable, 1, 0, "",                 bgcolor = color.new(#363a45, 0))
-    table.cell(scoreTable, 0, 1, "Composite Score",  text_color = color.gray,  text_size = size.tiny)
-    table.cell(scoreTable, 1, 1, str.tostring(compositeScore, "#.###"), text_color = scoreColor, text_size = size.small)
-    table.cell(scoreTable, 0, 2, "Trend",            text_color = color.gray,  text_size = size.tiny)
-    table.cell(scoreTable, 1, 2, str.tostring(sTrend, "#.##"), text_color = sTrend > 0 ? i_bullColor : i_bearColor, text_size = size.tiny)
-    table.cell(scoreTable, 0, 3, "Momentum",         text_color = color.gray,  text_size = size.tiny)
-    table.cell(scoreTable, 1, 3, str.tostring(sMomentum, "#.##"), text_color = sMomentum > 0 ? i_bullColor : i_bearColor, text_size = size.tiny)
-    table.cell(scoreTable, 0, 4, "Volatility",       text_color = color.gray,  text_size = size.tiny)
-    table.cell(scoreTable, 1, 4, str.tostring(sVolatility, "#.##"), text_color = color.white, text_size = size.tiny)
-    table.cell(scoreTable, 0, 5, "Confluence",       text_color = color.gray,  text_size = size.tiny)
-    string confStr = compositeScore > 0 ? str.tostring(bullConfluence) + "/3 Bull" : str.tostring(bearConfluence) + "/3 Bear"
-    table.cell(scoreTable, 1, 5, confStr,            text_color = color.white, text_size = size.tiny)
-    table.cell(scoreTable, 0, 6, "Squeeze",          text_color = color.gray,  text_size = size.tiny)
-    table.cell(scoreTable, 1, 6, isSqueeze ? "ACTIVE" : "---", text_color = isSqueeze ? color.orange : color.gray, text_size = size.tiny)
+if i_showDashboard
+    var table scoreTable = table.new(position.top_right, 2, 8, color.new(#1e222d, 10), border_color = color.new(#363a45, 0), border_width = 1)
+    if barstate.islastconfirmedhistory or barstate.isrealtime
+        color scoreColor = compositeScore > i_bullThresh ? i_bullColor : compositeScore < i_bearThresh ? i_bearColor : i_neutralColor
+        // Header
+        table.cell(scoreTable, 0, 0, "ULPR Dashboard",  text_color = color.white, text_size = size.small, bgcolor = color.new(#363a45, 0))
+        table.cell(scoreTable, 1, 0, "v6",              text_color = color.gray,  text_size = size.tiny,  bgcolor = color.new(#363a45, 0))
+        // Composite Score
+        table.cell(scoreTable, 0, 1, "Composite Score",  text_color = color.gray,  text_size = size.tiny)
+        table.cell(scoreTable, 1, 1, str.tostring(compositeScore, "#.###"), text_color = scoreColor, text_size = size.small)
+        // Trend
+        table.cell(scoreTable, 0, 2, "Trend Score",     text_color = color.gray,  text_size = size.tiny)
+        table.cell(scoreTable, 1, 2, str.tostring(sTrend, "#.##"), text_color = sTrend > 0 ? i_bullColor : i_bearColor, text_size = size.tiny)
+        // Momentum
+        table.cell(scoreTable, 0, 3, "Momentum Score",  text_color = color.gray,  text_size = size.tiny)
+        table.cell(scoreTable, 1, 3, str.tostring(sMomentum, "#.##"), text_color = sMomentum > 0 ? i_bullColor : i_bearColor, text_size = size.tiny)
+        // Volatility
+        table.cell(scoreTable, 0, 4, "Volatility Score", text_color = color.gray, text_size = size.tiny)
+        table.cell(scoreTable, 1, 4, str.tostring(sVolatility, "#.##"), text_color = color.white, text_size = size.tiny)
+        // Confluence
+        table.cell(scoreTable, 0, 5, "Confluence",      text_color = color.gray,  text_size = size.tiny)
+        string confDir = compositeScore >= 0 ? "Bull" : "Bear"
+        int    confVal = compositeScore >= 0 ? bullConfluence : bearConfluence
+        table.cell(scoreTable, 1, 5, str.tostring(confVal) + "/3 " + confDir, text_color = color.white, text_size = size.tiny)
+        // Squeeze
+        table.cell(scoreTable, 0, 6, "Squeeze",         text_color = color.gray,  text_size = size.tiny)
+        table.cell(scoreTable, 1, 6, isSqueeze ? "ACTIVE" : "---", text_color = isSqueeze ? color.orange : color.gray, text_size = size.tiny)
+        // Regime
+        table.cell(scoreTable, 0, 7, "Regime",          text_color = color.gray,  text_size = size.tiny)
+        string regime = trendBullish ? "BULLISH" : trendBearish ? "BEARISH" : "NEUTRAL"
+        color regColor = trendBullish ? i_bullColor : trendBearish ? i_bearColor : i_neutralColor
+        table.cell(scoreTable, 1, 7, regime, text_color = regColor, text_size = size.tiny)
